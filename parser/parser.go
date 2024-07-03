@@ -6,6 +6,7 @@ import (
 	"eth_parser/eth"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -19,6 +20,7 @@ type Parser struct {
 	currentBlock int
 	transactions map[string][]eth.Transaction
 	subscribed   map[string]context.CancelFunc
+	mu           sync.Mutex
 }
 
 func NewParser() *Parser {
@@ -30,21 +32,23 @@ func NewParser() *Parser {
 }
 
 func (p *Parser) GetCurrentBlock() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.currentBlock
 }
 
 func (p *Parser) Subscribe(address_ string) bool {
 	address := strings.ToLower(address_)
 
+	p.mu.Lock()
 	if cancel, found := p.subscribed[address]; found {
 		fmt.Printf("%v already subscribed.\n", address)
 		cancel()
 		delete(p.transactions, address)
 	}
-
 	ctx, cancel := context.WithCancel(context.Background())
-
 	p.subscribed[address] = cancel
+	p.mu.Unlock()
 
 	go func() {
 		blockNumber, err := eth.GetCurrentBlockNumber()
@@ -66,6 +70,7 @@ func (p *Parser) Subscribe(address_ string) bool {
 				}
 
 				count := 0
+				p.mu.Lock()
 				for _, tx := range block.Transactions {
 					if tx.From == address || tx.To == address {
 						p.transactions[address] = append(p.transactions[address], tx)
@@ -75,6 +80,7 @@ func (p *Parser) Subscribe(address_ string) bool {
 				fmt.Printf("[%v] %v transactions related to %v.\n", blockNumber, count, address)
 
 				p.currentBlock = blockNumber
+				p.mu.Unlock()
 
 				blockNumber++
 				time.Sleep(config.POLLING_INTERVAL)
@@ -87,5 +93,7 @@ func (p *Parser) Subscribe(address_ string) bool {
 
 func (p *Parser) GetTransactions(address_ string) []eth.Transaction {
 	address := strings.ToLower(address_)
+	p.mu.Lock()
+	defer p.mu.Unlock()
 	return p.transactions[address]
 }
